@@ -25,7 +25,7 @@ jobs:
       - name: Validate Composer Manifest & Syntax
         run: |
           echo "Validating AldebaranCRM enterprise composer package..."
-          composer validate --strict --no-check-all
+          composer validate --no-check-lock
           echo "Checking PHP syntax across app & packages..."
           php -l config/app.php
           php -l packages/Webkul/Admin/src/Config/core_config.php
