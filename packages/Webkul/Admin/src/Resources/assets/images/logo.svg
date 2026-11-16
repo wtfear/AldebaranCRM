@@ -1,0 +1,33 @@
+<svg width="220" height="42" viewBox="0 0 220 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="aldebaranGrad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF6F00" />
+      <stop offset="50%" stop-color="#E65100" />
+      <stop offset="100%" stop-color="#BF360C" />
+    </linearGradient>
+    <linearGradient id="goldGlow" x1="6" y1="6" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFE082" />
+      <stop offset="100%" stop-color="#FFB300" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Aldebaran Giant Star Icon -->
+  <g transform="translate(3, 3)">
+    <!-- Outer Diamond / Star Burst -->
+    <path d="M18 0L23.5 12.5L36 18L23.5 23.5L18 36L12.5 23.5L0 18L12.5 12.5Z" fill="url(#aldebaranGrad)" />
+    <!-- Inner Core Radiant Star -->
+    <path d="M18 5L21.5 14.5L31 18L21.5 21.5L18 31L14.5 21.5L5 18L14.5 14.5Z" fill="url(#goldGlow)" filter="url(#glow)" opacity="0.95" />
+    <!-- Center Eye of Taurus -->
+    <circle cx="18" cy="18" r="4.2" fill="#FFFFFF" />
+    <circle cx="18" cy="18" r="2.2" fill="#DD2C00" />
+  </g>
+
+  <!-- Typography -->
+  <text x="48" y="27" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="800" letter-spacing="1.5" fill="#1E293B">ALDEBARAN</text>
+  <rect x="172" y="11" width="42" height="20" rx="4" fill="#FF5722" />
+  <text x="178" y="25" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="800" fill="#FFFFFF" letter-spacing="0.5">CRM</text>
+</svg>

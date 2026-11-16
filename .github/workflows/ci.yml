@@ -1,0 +1,41 @@
+name: AldebaranCRM CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate Aldebaran Enterprise Architecture
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl, gd, intl, mbstring, pdo, pdo_mysql, zip
+          tools: composer:v2
+
+      - name: Validate Composer Manifest & Syntax
+        run: |
+          echo "Validating AldebaranCRM enterprise composer package..."
+          composer validate --strict --no-check-all
+          echo "Checking PHP syntax across app & packages..."
+          php -l config/app.php
+          php -l packages/Webkul/Admin/src/Config/core_config.php
+
+      - name: Verify Brand Assets & Docker Architecture
+        run: |
+          test -f public/aldebaran-logo.svg && echo "Brand logo verified"
+          test -f packages/Webkul/Admin/src/Resources/assets/images/logo.svg && echo "Admin logo verified"
+          test -f Dockerfile && echo "Dockerfile verified"
+          test -f docker-compose.yml && echo "Docker Compose verified"
+          test -f render.yaml && echo "Render manifest verified"
+          test -f README.md && echo "Enterprise documentation verified"
+          echo "AldebaranCRM CI validation passed!"

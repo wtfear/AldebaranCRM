@@ -1,0 +1,370 @@
+<?php
+
+namespace Webkul\Admin\Http\Controllers\Settings;
+
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
+use Illuminate\View\View;
+use Webkul\Admin\DataGrids\Settings\AttributeDataGrid;
+use Webkul\Admin\Http\Controllers\Controller;
+use Webkul\Admin\Http\Requests\MassDestroyRequest;
+use Webkul\Attribute\Repositories\AttributeRepository;
+use Webkul\Attribute\Repositories\AttributeValueRepository;
+use Webkul\Core\Contracts\Validations\Code;
+
+class AttributeController extends Controller
+{
+    /**
+     * Create a new controller instance.
+     *
+     * @return void
+     */
+    public function __construct(
+        protected AttributeRepository $attributeRepository,
+        protected AttributeValueRepository $attributeValueRepository
+    ) {}
+
+    /**
+     * Display a listing of the resource.
+     */
+    public function index(): View|JsonResponse
+    {
+        if (request()->ajax()) {
+            return datagrid(AttributeDataGrid::class)->process();
+        }
+
+        return view('admin::settings.attributes.index');
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     */
+    public function create(): View
+    {
+        return view('admin::settings.attributes.create');
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     */
+    public function store(): RedirectResponse|JsonResponse
+    {
+        $this->validate(request(), [
+            'entity_type' => ['required', Rule::in(array_keys(config('attribute_entity_types')))],
+            'code' => [
+                'required',
+                new Code,
+                Rule::unique('attributes', 'code')->where('entity_type', request('entity_type')),
+                Rule::notIn($this->reservedCodes(request('entity_type'))),
+            ],
+            'name' => 'required',
+            'type' => 'required',
+            'validation' => 'nullable|in:numeric,email,decimal,url',
+        ]);
+
+        Event::dispatch('settings.attribute.create.before');
+
+        $attribute = $this->attributeRepository->create(array_merge(request()->all(), [
+            'is_user_defined' => 1,
+        ]));
+
+        Event::dispatch('settings.attribute.create.after', $attribute);
+
+        if (request()->ajax()) {
+            return response()->json([
+                'data' => $attribute,
+                'message' => trans('admin::app.settings.attributes.index.create-success'),
+            ]);
+        }
+
+        session()->flash('success', trans('admin::app.settings.attributes.index.create-success'));
+
+        return redirect()->route('admin.settings.attributes.index');
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     */
+    public function edit(int $id): View
+    {
+        $attribute = $this->attributeRepository->findOrFail($id);
+
+        return view('admin::settings.attributes.edit', compact('attribute'));
+    }
+
+    /**
+     * Update the specified resource in storage.
+     */
+    public function update($id): RedirectResponse
+    {
+        $this->validate(request(), [
+            'name' => 'required',
+            'validation' => 'nullable|in:numeric,email,decimal,url',
+        ]);
+
+        Event::dispatch('settings.attribute.update.before', $id);
+
+        $quickAdd = request()->has('quick_add') ? 1 : 0;
+
+        request()->merge(['quick_add' => $quickAdd]);
+
+        $attribute = $this->attributeRepository->update(
+            request()->except(['code', 'type', 'entity_type', 'is_user_defined']),
+            $id
+        );
+
+        Event::dispatch('settings.attribute.update.after', $attribute);
+
+        session()->flash('success', trans('admin::app.settings.attributes.index.update-success'));
+
+        return redirect()->route('admin.settings.attributes.index');
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        $attribute = $this->attributeRepository->findOrFail($id);
+
+        if (! $attribute->is_user_defined) {
+            return response()->json([
+                'message' => trans('admin::app.settings.attributes.index.user-define-error'),
+            ], 400);
+        }
+
+        try {
+            Event::dispatch('settings.attribute.delete.before', $id);
+
+            $this->attributeRepository->delete($id);
+
+            Event::dispatch('settings.attribute.delete.after', $id);
+
+            return response()->json([
+                'status' => true,
+                'message' => trans('admin::app.settings.attributes.index.delete-success'),
+            ], 200);
+        } catch (\Exception $exception) {
+            return response()->json([
+                'message' => trans('admin::app.settings.attributes.index.delete-failed'),
+            ], 400);
+        }
+    }
+
+    /**
+     * Check unique validation.
+     *
+     * @return void
+     */
+    public function checkUniqueValidation()
+    {
+        $this->validate(request(), [
+            'entity_type' => ['required', Rule::in(array_keys(config('attribute_entity_types')))],
+            'attribute_code' => ['required', 'string'],
+        ]);
+
+        $attribute = $this->attributeRepository->findOneWhere([
+            'code' => request('attribute_code'),
+            'entity_type' => request('entity_type'),
+        ]);
+
+        abort_unless($attribute, 404);
+
+        if (! $attribute->is_unique) {
+            return response()->json(['validated' => true]);
+        }
+
+        return response()->json([
+            'validated' => $this->attributeValueRepository->isValueUnique(
+                $this->recordIdInScope(request('entity_type'), request('entity_id')),
+                request('entity_type'),
+                $attribute,
+                request('attribute_value'),
+            ),
+        ]);
+    }
+
+    /**
+     * The id of the record being edited, when the caller may open it; `null` otherwise.
+     */
+    protected function recordIdInScope(string $entityType, $entityId)
+    {
+        if (! is_numeric($entityId)) {
+            return null;
+        }
+
+        $model = app(config('attribute_entity_types.'.$entityType.'.repository'))->getModel();
+
+        return bouncer()->scopeToAuthorizedUsers($model->newQuery())->whereKey($entityId)->value($model->getKeyName());
+    }
+
+    /**
+     * Codes a new attribute of the given entity type may not take.
+     */
+    protected function reservedCodes(?string $entityType): array
+    {
+        $repository = config('attribute_entity_types.'.$entityType.'.repository');
+
+        $columns = $repository
+            ? Schema::getColumnListing(app($repository)->getModel()->getTable())
+            : [];
+
+        return array_merge($columns, [
+            'entity_type',
+            'quick_add',
+            'email_id',
+            'lead_id',
+            'person',
+            'products',
+            'items',
+            'inventories',
+            'organization_name',
+            'shipping_address_same_as_billing',
+        ]);
+    }
+
+    /**
+     * Search attribute lookup results
+     */
+    public function lookup($lookup): JsonResponse
+    {
+        $results = $this->attributeRepository->getLookUpOptions($lookup, request()->input('query'));
+
+        return response()->json($this->onlyAuthorizedLookUpResults($lookup, $results));
+    }
+
+    /**
+     * Search attribute lookup results
+     */
+    public function lookupEntity(string $lookup): JsonResponse
+    {
+        $result = $this->onlyAuthorizedLookUpResults(
+            $lookup,
+            $this->attributeRepository->getLookUpEntity($lookup, request()->input('query'))
+        );
+
+        /**
+         * Only what a lookup field displays. The repository hands back the whole record — a lead's
+         * value and description, a person's emails and phone numbers — and this endpoint takes any
+         * id. Forms name the value a record already holds when they render, so an out-of-scope
+         * value still shows there; this endpoint only serves fields given a bare id.
+         */
+        $nameOnly = fn ($record) => $record->only(['id', 'name']);
+
+        return response()->json(match (true) {
+            $result instanceof Collection => $result->map($nameOnly),
+            (bool) $result => $nameOnly($result),
+            default => null,
+        });
+    }
+
+    /**
+     * Drop look-up results outside the acting user's data scope.
+     *
+     * A lookup field offers leads, persons, organizations or users by name, and may not offer one
+     * the user cannot open. The repository methods are left unscoped because web forms,
+     * automations and attribute storage call them with no user signed in.
+     *
+     * @param  mixed  $results  A collection, a single record, or null.
+     * @return mixed
+     */
+    protected function onlyAuthorizedLookUpResults(string $lookup, $results)
+    {
+        if (! $results) {
+            return $results;
+        }
+
+        $items = $results instanceof Collection ? $results : collect([$results]);
+
+        $authorizedIds = bouncer()->scopeToAuthorizedUsers(
+            app(config('attribute_lookups.'.$lookup.'.repository'))->whereIn('id', $items->pluck('id')->all())
+        )->pluck('id')->all();
+
+        $authorized = $items->filter(fn ($item) => in_array($item->id, $authorizedIds))->values();
+
+        return $results instanceof Collection ? $authorized : $authorized->first();
+    }
+
+    /**
+     * Mass Delete the specified resources.
+     */
+    public function massDestroy(MassDestroyRequest $massDestroyRequest): JsonResponse
+    {
+        $count = 0;
+
+        $attributes = $this->attributeRepository->findWhereIn('id', $massDestroyRequest->input('indices'));
+
+        foreach ($attributes as $attribute) {
+            $attribute = $this->attributeRepository->find($attribute->id);
+
+            if (! $attribute->is_user_defined) {
+                continue;
+            }
+
+            Event::dispatch('settings.attribute.delete.before', $attribute->id);
+
+            $this->attributeRepository->delete($attribute->id);
+
+            Event::dispatch('settings.attribute.delete.after', $attribute->id);
+
+            $count++;
+        }
+
+        if (! $count) {
+            return response()->json([
+                'message' => trans('admin::app.settings.attributes.index.mass-delete-failed'),
+            ], 400);
+        }
+
+        return response()->json([
+            'message' => trans('admin::app.settings.attributes.index.delete-success'),
+        ]);
+    }
+
+    /**
+     * Get attribute options associated with attribute.
+     *
+     * @return View
+     */
+    public function getAttributeOptions(int $id)
+    {
+        $attribute = $this->attributeRepository->findOrFail($id);
+
+        return $attribute->options()->orderBy('sort_order')->get();
+    }
+
+    /**
+     * Download image or file
+     */
+    public function download()
+    {
+        $path = request('path');
+
+        /**
+         * The path arrives from the query string, so it is resolved against the attribute values
+         * that actually reference a stored file before anything is served. Handing it straight to
+         * the disk let any path on the shared storage disk be downloaded through this endpoint —
+         * import artefacts, activity attachments and configuration uploads all live alongside
+         * attribute files. The type check matters because `text_value` is shared with the text,
+         * textarea, multiselect and checkbox types, which hold no file reference.
+         */
+        if (! is_string($path) || $path === '') {
+            abort(404);
+        }
+
+        $attributeValue = $this->attributeValueRepository
+            ->findWhere(['text_value' => $path])
+            ->first(fn ($value) => in_array($value->attribute?->type, ['file', 'image'], true));
+
+        if (! $attributeValue) {
+            abort(404);
+        }
+
+        return Storage::download($attributeValue->text_value);
+    }
+}
